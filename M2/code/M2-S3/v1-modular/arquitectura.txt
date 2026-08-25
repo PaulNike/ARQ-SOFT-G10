@@ -1,0 +1,11 @@
+# Reglas de dependencia declaradas para este sistema.
+# Formato:  modulo -> modulo-permitido
+# El verificador reporta toda dependencia que no este declarada aqui,
+# todo acceso al internal de otro modulo y todo ciclo.
+
+venta    -> catalogo
+venta    -> plataforma
+acceso   -> venta
+reporte  -> venta
+reporte  -> catalogo
+reporte  -> plataforma
