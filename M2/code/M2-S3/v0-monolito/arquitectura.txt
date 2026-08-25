@@ -1,0 +1,11 @@
+# Reglas de dependencia declaradas para este sistema.
+# Formato:  paquete -> paquete-permitido
+# El verificador reporta toda dependencia que no este declarada aqui.
+
+controlador -> servicio
+controlador -> modelo
+controlador -> util
+servicio    -> repositorio
+servicio    -> modelo
+servicio    -> util
+repositorio -> modelo
