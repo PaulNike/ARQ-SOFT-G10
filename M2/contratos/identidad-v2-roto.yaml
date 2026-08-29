@@ -1,0 +1,215 @@
+openapi: 3.0.3
+
+# =============================================================================
+#  CONTRATO DEL SERVICIO DE IDENTIDAD  -  version 2   (EL QUE ROMPE)
+#
+#  Este es el MISMO servicio, con los campos renombrados "para que se
+#  entiendan mejor". El cambio es razonable y esta mejor escrito.
+#
+#  Comparar con identidad-v1.yaml y contar cuantos campos cambiaron:
+#  son dos. Con esos dos se caen los tres consumidores a la vez.
+#
+#  Pegar en https://editor.swagger.io para verlo renderizado.
+# =============================================================================
+
+info:
+  title: Servicio de Identidad - TicketPe
+  version: "2.0.0"
+  description: |
+    Verifica la identidad de una persona y si esta habilitada para operar.
+
+    **Capacidad de negocio:** verificar quien es una persona.
+
+    ### Que cambio respecto de la v1
+
+    | Campo en v1 | Campo en v2 | Efecto |
+    |---|---|---|
+    | `dni` | `documento` | Rompe a todo consumidor que lea `dni` |
+    | `habilitado` (boolean) | `estado` (ACTIVO / SUSPENDIDO) | Rompe: cambia el nombre Y el tipo |
+    | `nombre` | `titular` | Rompe a quien muestre el nombre |
+
+    Los tres consumidores leen esos campos. Ninguno fue modificado.
+    Al desplegar esta version, los tres empiezan a fallar al mismo tiempo,
+    y el monitoreo del servicio de identidad sigue en verde.
+
+    ### Consumidores registrados
+
+    Antes de cambiar cualquier cosa de este contrato hay que avisarles a los tres.
+    Esta lista no es documentacion: es la lista de a quien se le rompe el sistema.
+
+    | Consumidor | Equipo responsable | Contacto |
+    |---|---|---|
+    | Servicio de venta | Equipo Ventas | ventas@ticketpe.pe |
+    | Servicio de control de acceso | Equipo Operaciones | operaciones@ticketpe.pe |
+    | Programa de fidelizacion | Equipo Marketing | marketing@ticketpe.pe |
+
+    ### Politica de cambios
+
+    Esta version se publico **sin mantener viva la v1** y **sin avisar** a los
+    consumidores. Eso es lo que convierte una mejora en un incidente.
+
+    La forma correcta habria sido: publicar `/v2` en paralelo, dejar `/v1`
+    respondiendo 6 meses, y migrar consumidor por consumidor.
+
+  contact:
+    name: Equipo de Identidad
+    email: identidad@ticketpe.pe
+
+servers:
+  - url: https://api.ticketpe.pe/identidad/v2
+    description: Produccion
+  - url: https://staging-api.ticketpe.pe/identidad/v2
+    description: Pruebas
+  - url: http://localhost:8082
+    description: Local (arrancar con -Dcontrato=2)
+
+tags:
+  - name: verificacion
+    description: Consulta de identidad de una persona
+
+paths:
+  /verificar:
+    get:
+      tags: [verificacion]
+      summary: Verifica una persona por su documento
+      description: |
+        Devuelve el nombre de la persona y si esta habilitada para operar.
+
+        Una persona puede estar deshabilitada por bloqueo administrativo,
+        por deuda o por sancion. El motivo no se expone: solo el estado.
+      operationId: verificarIdentidad
+      parameters:
+        - name: dni
+          in: query
+          required: true
+          description: Documento Nacional de Identidad, 8 digitos
+          schema:
+            type: string
+            pattern: '^[0-9]{8}$'
+            example: "40011223"
+      responses:
+        "200":
+          description: La persona fue encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespuestaIdentidad'
+              examples:
+                activa:
+                  summary: Persona activa
+                  value:
+                    version: 2
+                    documento: "40011223"
+                    titular: "Ana Quispe"
+                    estado: ACTIVO
+                suspendida:
+                  summary: Persona suspendida
+                  value:
+                    version: 2
+                    documento: "40077889"
+                    titular: "Luis Mendoza"
+                    estado: SUSPENDIDO
+        "404":
+          description: No existe una persona con ese documento
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                codigo: NO_ENCONTRADO
+                mensaje: No existe una persona con ese documento
+        "400":
+          description: El documento no tiene el formato esperado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                codigo: DOCUMENTO_INVALIDO
+                mensaje: El dni debe tener 8 digitos numericos
+        "503":
+          description: |
+            El servicio no puede responder en este momento.
+
+            **Importante para el consumidor:** este codigo significa
+            "no se pudo verificar", NO significa "no esta habilitada".
+            Tratarlo como rechazo es un error de integracion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                codigo: NO_DISPONIBLE
+                mensaje: El padron no responde. Reintentar en unos segundos.
+
+  /salud:
+    get:
+      tags: [verificacion]
+      summary: Estado del servicio
+      description: Lo consulta el monitoreo, no los consumidores de negocio.
+      operationId: salud
+      responses:
+        "200":
+          description: El servicio responde
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  estado:
+                    type: string
+                    example: ARRIBA
+                  version:
+                    type: string
+                    example: "1.0.0"
+
+components:
+  schemas:
+
+    RespuestaIdentidad:
+      type: object
+      description: |
+        Los mismos cuatro datos de la v1, con otros nombres.
+        La informacion es identica. Lo que cambio es el contrato.
+      required:
+        - version
+        - documento
+        - titular
+        - estado
+      properties:
+        version:
+          type: integer
+          example: 2
+        documento:
+          type: string
+          description: "Antes se llamaba `dni`. Nombre mas claro, consumidores rotos."
+          example: "40011223"
+        titular:
+          type: string
+          description: "Antes se llamaba `nombre`."
+          example: "Ana Quispe"
+        estado:
+          type: string
+          description: |
+            Antes era `habilitado`, un boolean. Ahora es un texto con dos valores.
+            Cambiar el tipo ademas del nombre hace el rompimiento silencioso:
+            un consumidor que lea el campo equivocado recibe `null`, no un error.
+          enum: [ACTIVO, SUSPENDIDO]
+          example: ACTIVO
+
+    Error:
+      type: object
+      required:
+        - codigo
+        - mensaje
+      properties:
+        codigo:
+          type: string
+          description: Codigo estable. Los consumidores pueden decidir sobre este valor.
+          enum:
+            - NO_ENCONTRADO
+            - DOCUMENTO_INVALIDO
+            - NO_DISPONIBLE
+        mensaje:
+          type: string
+          description: Texto para humanos. Puede cambiar sin aviso, NO decidir sobre el.

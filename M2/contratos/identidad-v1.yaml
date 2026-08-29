@@ -1,0 +1,200 @@
+openapi: 3.0.3
+
+# =============================================================================
+#  CONTRATO DEL SERVICIO DE IDENTIDAD  -  version 1
+#
+#  Este archivo ES la arquitectura de la integracion.
+#  Todo lo que este aqui, otros equipos lo van a dar por cierto.
+#  Todo lo que NO este aqui, no existe.
+#
+#  Pegar en https://editor.swagger.io para verlo renderizado.
+# =============================================================================
+
+info:
+  title: Servicio de Identidad - TicketPe
+  version: "1.0.0"
+  description: |
+    Verifica la identidad de una persona y si esta habilitada para operar.
+
+    **Capacidad de negocio:** verificar quien es una persona.
+    Se implementa una sola vez y la consumen varios sistemas.
+
+    ### Consumidores registrados
+
+    Antes de cambiar cualquier cosa de este contrato hay que avisarles a los tres.
+    Esta lista no es documentacion: es la lista de a quien se le rompe el sistema.
+
+    | Consumidor | Equipo responsable | Contacto |
+    |---|---|---|
+    | Servicio de venta | Equipo Ventas | ventas@ticketpe.pe |
+    | Servicio de control de acceso | Equipo Operaciones | operaciones@ticketpe.pe |
+    | Programa de fidelizacion | Equipo Marketing | marketing@ticketpe.pe |
+
+    ### Politica de cambios
+
+    - Agregar un campo nuevo **opcional**: no rompe. Se puede desplegar.
+    - Renombrar o quitar un campo: **rompe a todos**. Exige version nueva.
+    - La version anterior se mantiene viva **6 meses** despues de publicar la nueva.
+    - Cada cambio se prueba con las pruebas de contrato de los tres consumidores.
+
+  contact:
+    name: Equipo de Identidad
+    email: identidad@ticketpe.pe
+
+servers:
+  - url: https://api.ticketpe.pe/identidad/v1
+    description: Produccion
+  - url: https://staging-api.ticketpe.pe/identidad/v1
+    description: Pruebas
+  - url: http://localhost:8082
+    description: Local (el demo de clase)
+
+tags:
+  - name: verificacion
+    description: Consulta de identidad de una persona
+
+paths:
+  /verificar:
+    get:
+      tags: [verificacion]
+      summary: Verifica una persona por su documento
+      description: |
+        Devuelve el nombre de la persona y si esta habilitada para operar.
+
+        Una persona puede estar deshabilitada por bloqueo administrativo,
+        por deuda o por sancion. El motivo no se expone: solo el estado.
+      operationId: verificarIdentidad
+      parameters:
+        - name: dni
+          in: query
+          required: true
+          description: Documento Nacional de Identidad, 8 digitos
+          schema:
+            type: string
+            pattern: '^[0-9]{8}$'
+            example: "40011223"
+      responses:
+        "200":
+          description: La persona fue encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespuestaIdentidad'
+              examples:
+                habilitada:
+                  summary: Persona habilitada
+                  value:
+                    version: 1
+                    dni: "40011223"
+                    nombre: "Ana Quispe"
+                    habilitado: true
+                bloqueada:
+                  summary: Persona bloqueada
+                  value:
+                    version: 1
+                    dni: "40077889"
+                    nombre: "Luis Mendoza"
+                    habilitado: false
+        "404":
+          description: No existe una persona con ese documento
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                codigo: NO_ENCONTRADO
+                mensaje: No existe una persona con ese documento
+        "400":
+          description: El documento no tiene el formato esperado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                codigo: DOCUMENTO_INVALIDO
+                mensaje: El dni debe tener 8 digitos numericos
+        "503":
+          description: |
+            El servicio no puede responder en este momento.
+
+            **Importante para el consumidor:** este codigo significa
+            "no se pudo verificar", NO significa "no esta habilitada".
+            Tratarlo como rechazo es un error de integracion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                codigo: NO_DISPONIBLE
+                mensaje: El padron no responde. Reintentar en unos segundos.
+
+  /salud:
+    get:
+      tags: [verificacion]
+      summary: Estado del servicio
+      description: Lo consulta el monitoreo, no los consumidores de negocio.
+      operationId: salud
+      responses:
+        "200":
+          description: El servicio responde
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  estado:
+                    type: string
+                    example: ARRIBA
+                  version:
+                    type: string
+                    example: "1.0.0"
+
+components:
+  schemas:
+
+    RespuestaIdentidad:
+      type: object
+      description: |
+        Los cuatro campos que unen a los tres consumidores.
+        Cambiar cualquiera de estos nombres los rompe a todos al mismo tiempo.
+      required:
+        - version
+        - dni
+        - nombre
+        - habilitado
+      properties:
+        version:
+          type: integer
+          description: Version del contrato con la que se genero esta respuesta
+          example: 1
+        dni:
+          type: string
+          description: El documento consultado, devuelto tal cual
+          example: "40011223"
+        nombre:
+          type: string
+          description: Nombre completo de la persona
+          example: "Ana Quispe"
+        habilitado:
+          type: boolean
+          description: |
+            Si la persona puede operar. El motivo de un `false` no se expone
+            a proposito: es asunto interno del servicio de identidad.
+          example: true
+
+    Error:
+      type: object
+      required:
+        - codigo
+        - mensaje
+      properties:
+        codigo:
+          type: string
+          description: Codigo estable. Los consumidores pueden decidir sobre este valor.
+          enum:
+            - NO_ENCONTRADO
+            - DOCUMENTO_INVALIDO
+            - NO_DISPONIBLE
+        mensaje:
+          type: string
+          description: Texto para humanos. Puede cambiar sin aviso, NO decidir sobre el.
