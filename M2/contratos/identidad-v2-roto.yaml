@@ -30,7 +30,7 @@ info:
 
     Los tres consumidores leen esos campos. Ninguno fue modificado.
     Al desplegar esta version, los tres empiezan a fallar al mismo tiempo,
-    y el monitoreo del servicio de identidad sigue en verde.
+    y el monitoreo del servicio de identidad sigue en verde - PRUEBA.
 
     ### Consumidores registrados
 
