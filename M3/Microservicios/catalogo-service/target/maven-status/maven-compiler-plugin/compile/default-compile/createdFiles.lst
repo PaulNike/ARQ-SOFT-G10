@@ -1,0 +1,11 @@
+pe\mercadotech\catalogo\exception\ProductoNoEncontradoException.class
+pe\mercadotech\catalogo\dto\ActualizarStockRequest.class
+pe\mercadotech\catalogo\exception\GlobalExceptionHandler.class
+pe\mercadotech\catalogo\model\Producto.class
+pe\mercadotech\catalogo\CatalogoServiceApplication.class
+pe\mercadotech\catalogo\controller\ProductoController.class
+pe\mercadotech\catalogo\dto\ProductoResponse.class
+pe\mercadotech\catalogo\repository\ProductoRepository.class
+pe\mercadotech\catalogo\service\ProductoService.class
+pe\mercadotech\catalogo\dto\CrearProductoRequest.class
+pe\mercadotech\catalogo\dto\DisponibilidadResponse.class

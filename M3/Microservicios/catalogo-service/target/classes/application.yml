@@ -1,0 +1,10 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: catalogo-service
+  datasource:
+    url: jdbc:h2:mem:catalogodb
+  jpa:
+    hibernate:
+      ddl-auto: update
