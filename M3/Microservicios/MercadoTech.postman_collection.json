@@ -1,0 +1,698 @@
+{
+  "info": {
+    "_postman_id": "3ad2d88d-867d-4db2-a111-mercadotech-m3",
+    "name": "MercadoTech - Microservicios",
+    "description": "Pruebas manuales de MercadoTech organizadas por bloques: comunicación síncrona, infraestructura, eventos, Resilience4j, Saga, trazabilidad y seguridad. Cada carpeta indica el orden y las condiciones de la demostración.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "catalogoUrl", "value": "http://localhost:8081" },
+    { "key": "pedidosUrl", "value": "http://localhost:8082" },
+    { "key": "configServerUrl", "value": "http://localhost:8888" },
+    { "key": "discoveryUrl", "value": "http://localhost:8761" },
+    { "key": "inventarioUrl", "value": "http://localhost:8083" },
+    { "key": "gatewayUrl", "value": "http://localhost:8080" },
+    { "key": "pagosUrl", "value": "http://localhost:8084" },
+    { "key": "enviosUrl", "value": "http://localhost:8085" },
+    { "key": "apiKey", "value": "mercadotech-demo-key", "type": "secret" },
+    { "key": "rabbitManagementUrl", "value": "http://localhost:15672" },
+    { "key": "rabbitUser", "value": "mercadotech" },
+    { "key": "rabbitPassword", "value": "mercadotech", "type": "secret" },
+    { "key": "productoId", "value": "1" },
+    { "key": "pedidoId", "value": "1" },
+    { "key": "pagoId", "value": "1" }
+  ],
+  "item": [
+    {
+      "name": "catalogo-service",
+      "item": [
+        {
+          "name": "1. Crear producto",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                "const body = pm.response.json();",
+                "pm.collectionVariables.set('productoId', body.id);"
+              ],
+              "type": "text/javascript"
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Laptop MercadoTech Pro\",\n  \"precio\": 3499.90,\n  \"stock\": 10\n}"
+            },
+            "url": "{{catalogoUrl}}/api/catalogo"
+          }
+        },
+        {
+          "name": "2. Buscar producto por id",
+          "request": { "method": "GET", "url": "{{catalogoUrl}}/api/catalogo/{{productoId}}" }
+        },
+        {
+          "name": "3. Listar productos",
+          "request": { "method": "GET", "url": "{{catalogoUrl}}/api/catalogo" }
+        },
+        {
+          "name": "4. Actualizar stock",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"stock\": 5\n}" },
+            "url": "{{catalogoUrl}}/api/catalogo/{{productoId}}/stock"
+          }
+        },
+        {
+          "name": "5. Consultar disponibilidad (contrato mínimo)",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('Solo expone disponible', () => {",
+                "  const body = pm.response.json();",
+                "  pm.expect(Object.keys(body)).to.eql(['disponible']);",
+                "});"
+              ],
+              "type": "text/javascript"
+            }
+          }],
+          "request": { "method": "GET", "url": "{{catalogoUrl}}/api/catalogo/{{productoId}}/disponibilidad" }
+        },
+        {
+          "name": "6. Producto inexistente - 404",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["pm.test('Responde 404', () => pm.response.to.have.status(404));"], "type": "text/javascript" }
+          }],
+          "request": { "method": "GET", "url": "{{catalogoUrl}}/api/catalogo/999999" }
+        }
+      ]
+    },
+    {
+      "name": "pedidos-service",
+      "item": [
+        {
+          "name": "1. Confirmar pedido - 201",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                "const body = pm.response.json();",
+                "pm.collectionVariables.set('pedidoId', body.id);"
+              ],
+              "type": "text/javascript"
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"productoId\": {{productoId}},\n  \"cantidad\": 2,\n  \"monto\": 6999.80\n}" },
+            "url": "{{pedidosUrl}}/api/pedidos"
+          }
+        },
+        {
+          "name": "2. Buscar pedido por id",
+          "request": { "method": "GET", "url": "{{pedidosUrl}}/api/pedidos/{{pedidoId}}" }
+        },
+        {
+          "name": "3. Producto inexistente - 409 degradado",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["pm.test('Fallback informa no disponibilidad', () => pm.response.to.have.status(409));"], "type": "text/javascript" }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"productoId\": 999999,\n  \"cantidad\": 1,\n  \"monto\": 10.00\n}" },
+            "url": "{{pedidosUrl}}/api/pedidos"
+          }
+        },
+        {
+          "name": "4. Catálogo apagado - fallback y circuit breaker",
+          "description": "Detenga catalogo-service y ejecute varias veces. Al principio responde 409 en unos 2 s; con el circuito abierto responde 409 inmediatamente.",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('Fallback responde 409', () => pm.response.to.have.status(409));"
+              ],
+              "type": "text/javascript"
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"productoId\": {{productoId}},\n  \"cantidad\": 1,\n  \"monto\": 3499.90\n}" },
+            "url": "{{pedidosUrl}}/api/pedidos"
+          }
+        }
+      ]
+    },
+    {
+      "name": "infraestructura-y-eventos",
+      "description": "Pruebas de la segunda clase. Arranque en este orden: config-server, discovery-server, inventario-service y api-gateway. Para eventos, levante RabbitMQ, catalogo-service, pedidos-service y correo-service.",
+      "item": [
+        {
+          "name": "A. Config Server",
+          "item": [
+            {
+              "name": "1. Configuración entregada a Inventario",
+              "description": "Demuestra que el puerto y el mensaje pertenecen al repositorio native del Config Server.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Config Server responde 200', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "const config = Object.assign({}, ...body.propertySources.map(p => p.source));",
+                    "pm.test('Entrega el puerto 8083', () => pm.expect(config['server.port']).to.eql(8083));",
+                    "pm.test('Entrega el mensaje de bienvenida', () => pm.expect(config['mensaje.bienvenida']).to.eql('Inventario listo, configuracion desde el Config Server'));"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "method": "GET",
+                "url": "{{configServerUrl}}/inventario-service/default"
+              }
+            }
+          ]
+        },
+        {
+          "name": "B. Eureka Discovery",
+          "item": [
+            {
+              "name": "1. Abrir panel de Eureka",
+              "description": "Devuelve el panel HTML de Eureka. También puede abrir {{discoveryUrl}} en el navegador.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": ["pm.test('Eureka está activo', () => pm.response.to.have.status(200));"],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "url": "{{discoveryUrl}}" }
+            },
+            {
+              "name": "2. Ver todas las aplicaciones registradas",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": ["pm.test('Registro disponible', () => pm.response.to.have.status(200));"],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Accept", "value": "application/json" }],
+                "url": "{{discoveryUrl}}/eureka/apps"
+              }
+            },
+            {
+              "name": "3. Inventario aparece registrado - 200",
+              "description": "Ejecute con inventario-service activo.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Inventario está registrado', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "pm.test('La instancia está UP', () => pm.expect(body.application.instance.status).to.eql('UP'));"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Accept", "value": "application/json" }],
+                "url": "{{discoveryUrl}}/eureka/apps/INVENTARIO-SERVICE"
+              }
+            },
+            {
+              "name": "4. Inventario desaparece - 404",
+              "description": "Detenga inventario-service, espere aproximadamente 15-30 segundos y ejecute esta petición.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": ["pm.test('Inventario fue retirado del registro', () => pm.response.to.have.status(404));"],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Accept", "value": "application/json" }],
+                "url": "{{discoveryUrl}}/eureka/apps/INVENTARIO-SERVICE"
+              }
+            }
+          ]
+        },
+        {
+          "name": "C. Inventario y Gateway",
+          "item": [
+            {
+              "name": "1. Inventario directo - 200",
+              "description": "Prueba de comparación. El mensaje debe seguir viniendo del Config Server.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Inventario responde 200', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "pm.test('Usa la configuración remota', () => pm.expect(body.mensaje).to.eql('Inventario listo, configuracion desde el Config Server'));"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "url": "{{inventarioUrl}}/api/inventario/ping" }
+            },
+            {
+              "name": "2. Inventario mediante Gateway y Eureka - 200",
+              "description": "Ruta creada automáticamente por discovery.locator; no existe una ruta manual en el Gateway.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Gateway responde 200', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "pm.test('Llegó a Inventario', () => {",
+                    "  pm.expect(body.servicio).to.eql('inventario');",
+                    "  pm.expect(body.estado).to.eql('vivo');",
+                    "  pm.expect(body.mensaje).to.eql('Inventario listo, configuracion desde el Config Server');",
+                    "});"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "header": [{ "key": "X-Api-Key", "value": "mercadotech-demo-key" }], "url": "{{gatewayUrl}}/inventario-service/api/inventario/ping" }
+            },
+            {
+              "name": "3. Gateway sin Inventario - 503",
+              "description": "Detenga Inventario y espere a que desaparezca de Eureka antes de ejecutar. El Gateway sigue vivo, pero ya no encuentra instancias.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": ["pm.test('No hay instancia disponible', () => pm.expect(pm.response.code).to.be.oneOf([404, 503]));"],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "header": [{ "key": "X-Api-Key", "value": "mercadotech-demo-key" }], "url": "{{gatewayUrl}}/inventario-service/api/inventario/ping" }
+            }
+          ]
+        },
+        {
+          "name": "D. RabbitMQ y eventos",
+          "description": "Estas peticiones usan la API de administración de RabbitMQ. Requieren `docker compose up -d rabbitmq`.",
+          "auth": {
+            "type": "basic",
+            "basic": [
+              { "key": "username", "value": "{{rabbitUser}}", "type": "string" },
+              { "key": "password", "value": "{{rabbitPassword}}", "type": "string" }
+            ]
+          },
+          "item": [
+            {
+              "name": "1. RabbitMQ está activo",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": ["pm.test('Management API responde 200', () => pm.response.to.have.status(200));"],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "url": "{{rabbitManagementUrl}}/api/overview" }
+            },
+            {
+              "name": "2. Exchange pedidos.eventos",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Exchange declarado', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "pm.test('Es fanout y durable', () => {",
+                    "  pm.expect(body.type).to.eql('fanout');",
+                    "  pm.expect(body.durable).to.eql(true);",
+                    "});"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "url": "{{rabbitManagementUrl}}/api/exchanges/%2F/pedidos.eventos" }
+            },
+            {
+              "name": "3. Cola de correo declarada",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Cola declarada', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "pm.test('La cola es durable', () => pm.expect(body.durable).to.eql(true));"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "url": "{{rabbitManagementUrl}}/api/queues/%2F/correo.pedidos-confirmados" }
+            },
+            {
+              "name": "4. Confirmar pedido y publicar evento - 201",
+              "description": "Ejecute primero `catalogo-service / 1. Crear producto`. Con Correo activo, después de esta petición su consola debe mostrar `[correo] enviando confirmacion del pedido ... al cliente`.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Pedido confirmado', () => pm.response.to.have.status(201));",
+                    "const body = pm.response.json();",
+                    "pm.collectionVariables.set('pedidoId', body.id);",
+                    "pm.test('Stock fue verificado', () => pm.expect(body.stockVerificado).to.eql(true));"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "auth": { "type": "noauth" },
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": {{productoId}},\n  \"cantidad\": 2,\n  \"monto\": 6999.80\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            },
+            {
+              "name": "5. Correo apagado: Pedidos sigue respondiendo 201",
+              "description": "Detenga correo-service antes de enviar. El evento queda en la cola durable y aparecerá en el log cuando Correo vuelva a arrancar.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": ["pm.test('Pedidos no depende de Correo', () => pm.response.to.have.status(201));"],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "auth": { "type": "noauth" },
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": {{productoId}},\n  \"cantidad\": 1,\n  \"monto\": 3499.90\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            },
+            {
+              "name": "6. Evento pendiente mientras Correo está apagado",
+              "description": "Ejecute después de la petición anterior y antes de volver a levantar correo-service.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Cola disponible', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "pm.test('Existe al menos un mensaje pendiente', () => pm.expect(body.messages_ready).to.be.at.least(1));"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "url": "{{rabbitManagementUrl}}/api/queues/%2F/correo.pedidos-confirmados" }
+            },
+            {
+              "name": "7. Evento consumido al reiniciar Correo",
+              "description": "Vuelva a levantar correo-service, espere el log de confirmación y ejecute. La cantidad de mensajes pendientes debe volver a cero.",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('Cola disponible', () => pm.response.to.have.status(200));",
+                    "const body = pm.response.json();",
+                    "pm.test('No quedan mensajes pendientes', () => pm.expect(body.messages_ready).to.eql(0));"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": { "method": "GET", "url": "{{rabbitManagementUrl}}/api/queues/%2F/correo.pedidos-confirmados" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "clase-3-resiliencia-saga-trazabilidad-seguridad",
+      "description": "Levante Catálogo (salvo en el bloque A), Pedidos, Pagos, Envíos y Gateway. Ejecute cada bloque en orden y respete sus instrucciones de preparación.",
+      "item": [
+        {
+          "name": "A. Circuit Breaker con Resilience4j",
+          "description": "Detenga catalogo-service y reinicie pedidos-service antes de comenzar. Los intentos 1 a 5 deben consumir el timeout; el intento 6 debe usar el circuito abierto.",
+          "item": [
+            {
+              "name": "1. Fallo 1 - fallback después del timeout",
+              "event": [{
+                "listen": "test",
+                "script": { "exec": [
+                  "pm.test('Fallback controlado: 409', () => pm.response.to.have.status(409));",
+                  "pm.test('La llamada espera el timeout', () => pm.expect(pm.response.responseTime).to.be.at.least(1800));"
+                ], "type": "text/javascript" }
+              }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 1,\n  \"cantidad\": 1,\n  \"monto\": 100.00\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            },
+            {
+              "name": "2. Fallo 2 - fallback después del timeout",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Fallback controlado: 409', () => pm.response.to.have.status(409));",
+                "pm.test('La llamada espera el timeout', () => pm.expect(pm.response.responseTime).to.be.at.least(1800));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 1,\n  \"cantidad\": 1,\n  \"monto\": 100.00\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            },
+            {
+              "name": "3. Fallo 3 - fallback después del timeout",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Fallback controlado: 409', () => pm.response.to.have.status(409));",
+                "pm.test('La llamada espera el timeout', () => pm.expect(pm.response.responseTime).to.be.at.least(1800));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 1,\n  \"cantidad\": 1,\n  \"monto\": 100.00\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            },
+            {
+              "name": "4. Fallo 4 - fallback después del timeout",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Fallback controlado: 409', () => pm.response.to.have.status(409));",
+                "pm.test('La llamada espera el timeout', () => pm.expect(pm.response.responseTime).to.be.at.least(1800));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 1,\n  \"cantidad\": 1,\n  \"monto\": 100.00\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            },
+            {
+              "name": "5. Fallo 5 - abre el circuito",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Fallback controlado: 409', () => pm.response.to.have.status(409));",
+                "pm.test('La llamada que abre aún espera el timeout', () => pm.expect(pm.response.responseTime).to.be.at.least(1800));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 1,\n  \"cantidad\": 1,\n  \"monto\": 100.00\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            },
+            {
+              "name": "6. Circuito abierto - respuesta inmediata",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Fallback controlado: 409', () => pm.response.to.have.status(409));",
+                "pm.test('El circuito abierto responde rápido', () => pm.expect(pm.response.responseTime).to.be.below(500));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 1,\n  \"cantidad\": 1,\n  \"monto\": 100.00\n}" },
+                "url": "{{pedidosUrl}}/api/pedidos"
+              }
+            }
+          ]
+        },
+        {
+          "name": "B. pagos-service e idempotencia",
+          "description": "Levante pagos-service en el puerto 8084. La primera petición guarda pagoId para las dos reversiones.",
+          "item": [
+            {
+              "name": "1. Cobrar pago - COBRADO",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Pago creado: 201', () => pm.response.to.have.status(201));",
+                "const body = pm.response.json();",
+                "pm.collectionVariables.set('pagoId', body.pagoId);",
+                "pm.test('Estado COBRADO', () => pm.expect(body.estado).to.eql('COBRADO'));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"pedidoId\": 500,\n  \"monto\": 25.00\n}" },
+                "url": "{{pagosUrl}}/api/pagos"
+              }
+            },
+            {
+              "name": "2. Reversar pago - REVERSADO",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Reversión exitosa: 200', () => pm.response.to.have.status(200));",
+                "pm.test('Estado REVERSADO', () => pm.expect(pm.response.json().estado).to.eql('REVERSADO'));"
+              ], "type": "text/javascript" } }],
+              "request": { "method": "POST", "url": "{{pagosUrl}}/api/pagos/{{pagoId}}/reversar" }
+            },
+            {
+              "name": "3. Reversar nuevamente - idempotente",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Segunda reversión exitosa: 200', () => pm.response.to.have.status(200));",
+                "pm.test('Sigue REVERSADO', () => pm.expect(pm.response.json().estado).to.eql('REVERSADO'));"
+              ], "type": "text/javascript" } }],
+              "request": { "method": "POST", "url": "{{pagosUrl}}/api/pagos/{{pagoId}}/reversar" }
+            }
+          ]
+        },
+        {
+          "name": "C. envios-service y stock real",
+          "description": "Levante envios-service en el puerto 8085. El producto 99 simula la inconsistencia entre Catálogo y almacén.",
+          "item": [
+            {
+              "name": "1. Generar envío normal - GENERADO",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Envío creado: 201', () => pm.response.to.have.status(201));",
+                "const body = pm.response.json();",
+                "pm.test('Estado GENERADO', () => pm.expect(body.estado).to.eql('GENERADO'));",
+                "pm.test('Incluye envioId', () => pm.expect(body.envioId).to.be.a('number'));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"pedidoId\": 123,\n  \"productoId\": 1\n}" },
+                "url": "{{enviosUrl}}/api/envios"
+              }
+            },
+            {
+              "name": "2. Producto 99 - sin stock real 422",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                "pm.test('Mensaje exacto', () => pm.expect(pm.response.json().error).to.eql('sin stock real en almacen'));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"pedidoId\": 99,\n  \"productoId\": 99\n}" },
+                "url": "{{enviosUrl}}/api/envios"
+              }
+            }
+          ]
+        },
+        {
+          "name": "D. Saga orquestada por pedidos-service",
+          "description": "Levante los cinco servicios. Para el flujo normal ejecute antes catalogo-service / 1. Crear producto. Las llamadas pasan por el Gateway y requieren API key.",
+          "item": [
+            {
+              "name": "1. Flujo normal - CONFIRMADO",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Pedido creado: 201', () => pm.response.to.have.status(201));",
+                "const body = pm.response.json();",
+                "pm.collectionVariables.set('pedidoId', body.id);",
+                "pm.test('Saga confirmada', () => pm.expect(body.estado).to.eql('CONFIRMADO'));",
+                "pm.test('Pago y envío registrados', () => { pm.expect(body.pagoId).to.be.a('number'); pm.expect(body.envioId).to.be.a('number'); });"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "X-Api-Key", "value": "{{apiKey}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": {{productoId}},\n  \"cantidad\": 2,\n  \"monto\": 251.00\n}" },
+                "url": "{{gatewayUrl}}/pedidos-service/api/pedidos"
+              }
+            },
+            {
+              "name": "2. Producto 99 - compensación",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Pedido procesado: 201', () => pm.response.to.have.status(201));",
+                "const body = pm.response.json();",
+                "pm.test('Pedido cancelado por stock real', () => pm.expect(body.estado).to.eql('CANCELADO_SIN_STOCK'));",
+                "pm.test('Pago conservado y envío ausente', () => { pm.expect(body.pagoId).to.be.a('number'); pm.expect(body.envioId).to.eql(null); });"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "X-Api-Key", "value": "{{apiKey}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 99,\n  \"cantidad\": 1,\n  \"monto\": 99.90\n}" },
+                "url": "{{gatewayUrl}}/pedidos-service/api/pedidos"
+              }
+            }
+          ]
+        },
+        {
+          "name": "E. Seguridad y trazabilidad en Gateway",
+          "description": "Verifica que la API key se valide en el borde y que el Gateway entregue un X-Trace-Id propagado a los servicios.",
+          "item": [
+            {
+              "name": "1. Sin API key - 401",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Gateway rechaza sin clave', () => pm.response.to.have.status(401));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 99,\n  \"cantidad\": 1,\n  \"monto\": 99.90\n}" },
+                "url": "{{gatewayUrl}}/pedidos-service/api/pedidos"
+              }
+            },
+            {
+              "name": "2. API key incorrecta - 401",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Gateway rechaza clave incorrecta', () => pm.response.to.have.status(401));"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "X-Api-Key", "value": "clave-incorrecta" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 99,\n  \"cantidad\": 1,\n  \"monto\": 99.90\n}" },
+                "url": "{{gatewayUrl}}/pedidos-service/api/pedidos"
+              }
+            },
+            {
+              "name": "3. API key válida y trace ID compartido - 201",
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Gateway permite la petición', () => pm.response.to.have.status(201));",
+                "const traceId = pm.response.headers.get('X-Trace-Id');",
+                "pm.test('La respuesta incluye X-Trace-Id', () => pm.expect(traceId).to.be.a('string').and.not.empty);",
+                "console.log('Busque este traceId en Gateway, Pedidos, Catálogo, Pagos y Envíos:', traceId);"
+              ], "type": "text/javascript" } }],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "X-Api-Key", "value": "{{apiKey}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"productoId\": 99,\n  \"cantidad\": 1,\n  \"monto\": 99.90\n}" },
+                "url": "{{gatewayUrl}}/pedidos-service/api/pedidos"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

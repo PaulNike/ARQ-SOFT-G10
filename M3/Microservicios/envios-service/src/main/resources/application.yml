@@ -1,14 +1,8 @@
 server:
-  port: 8081
+  port: 8085
 spring:
   application:
-    name: catalogo-service
-  datasource:
-    url: jdbc:h2:mem:catalogodb
-  jpa:
-    hibernate:
-      ddl-auto: update
-
+    name: envios-service
 logging:
   pattern:
     console: "%d{HH:mm:ss.SSS} [%X{traceId:-sin-trace}] %-5level %logger{36} - %msg%n"

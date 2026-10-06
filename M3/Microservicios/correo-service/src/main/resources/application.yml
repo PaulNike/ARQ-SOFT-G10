@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: correo-service
+  main:
+    web-application-type: none
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: mercadotech
+    password: mercadotech

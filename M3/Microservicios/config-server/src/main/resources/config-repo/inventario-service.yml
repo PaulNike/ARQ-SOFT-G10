@@ -1,0 +1,4 @@
+server:
+  port: 8083
+mensaje:
+  bienvenida: "Inventario listo, configuracion desde el Config Server"

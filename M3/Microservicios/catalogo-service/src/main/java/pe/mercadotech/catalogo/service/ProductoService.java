@@ -37,6 +37,10 @@ public class ProductoService {
         return repositorio.findAll().stream().map(ProductoResponse::desde).toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<Producto> buscarPorNombre(String nombre) {
+        return repositorio.findByNombreContainingIgnoreCase(nombre);
+    }
     @Transactional
     public ProductoResponse actualizarStock(Long id, ActualizarStockRequest request) {
         Producto producto = buscarEntidad(id);
@@ -46,6 +50,11 @@ public class ProductoService {
 
     @Transactional(readOnly = true)
     public DisponibilidadResponse verificarDisponibilidad(Long id) {
+        // Caso preparado para la demo: Catálogo cree que hay stock, pero Almacén
+        // rechazará el producto 99 y obligará a compensar la Saga.
+        if (id == 99L) {
+            return new DisponibilidadResponse(true);
+        }
         Producto producto = buscarEntidad(id);
         return new DisponibilidadResponse(producto.getStock() > 0);
     }
@@ -54,4 +63,6 @@ public class ProductoService {
         return repositorio.findById(id)
                 .orElseThrow(() -> new ProductoNoEncontradoException(id));
     }
+
+
 }
